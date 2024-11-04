@@ -5,6 +5,7 @@ go 1.23.1
 require (
 	github.com/doug-martin/goqu/v9 v9.19.0
 	github.com/gouniverse/sb v0.6.0
+	github.com/spf13/cast v1.7.0
 	modernc.org/sqlite v1.33.1
 )
 

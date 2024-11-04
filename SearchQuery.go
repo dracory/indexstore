@@ -1,10 +1,11 @@
 package indexstore
 
+import "github.com/doug-martin/goqu/v9"
+
 type SearchQuery struct {
-	Offset      int
-	Limit       int
-	SortOrder   string
-	OrderBy     string
-	CountOnly   bool
-	WithDeleted bool
+	Where     goqu.Expression
+	Offset    int
+	Limit     int
+	SortOrder string
+	OrderBy   string
 }
