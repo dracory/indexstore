@@ -22,15 +22,9 @@ type Store struct {
 
 // AutoMigrate auto migrate
 //
-// It will drop the table and create it again
+// It will drop the index table and create it again
 func (st *Store) AutoMigrate() error {
-	sqlStr := sb.NewBuilder(st.dbDriverName).Table(st.tableName).DropIfExists()
-
-	if st.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err := st.db.Exec(sqlStr)
+	err := st.Drop()
 
 	if err != nil {
 		return err
@@ -57,6 +51,25 @@ func (st *Store) EnableDebug(debug bool) {
 	st.debugEnabled = debug
 }
 
+func (store *Store) Insert(data map[string]any) error {
+	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
+		Insert(store.tableName).
+		Rows(data).
+		ToSQL()
+
+	if errSql != nil {
+		return errSql
+	}
+
+	if store.debugEnabled {
+		log.Println(sqlStr)
+	}
+
+	_, err := store.db.Exec(sqlStr)
+
+	return err
+}
+
 func (store *Store) Truncate() error {
 	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
 		Truncate(store.tableName).
@@ -76,7 +89,9 @@ func (store *Store) Truncate() error {
 }
 
 func (store *Store) Drop() error {
-	sqlStr := sb.NewBuilder(store.dbDriverName).Table(store.tableName).DropIfExists()
+	sqlStr := sb.NewBuilder(store.dbDriverName).
+		Table(store.tableName).
+		DropIfExists()
 
 	if store.debugEnabled {
 		log.Println(sqlStr)
@@ -85,4 +100,24 @@ func (store *Store) Drop() error {
 	_, err := store.db.Exec(sqlStr)
 
 	return err
+}
+
+func (store *Store) Search(query SearchQuery) ([]map[string]any, error) {
+	sqlStr, sqlParams, errSql := goqu.Dialect(store.dbDriverName).
+		Select("*").
+		Prepared(true).
+		From(store.tableName).
+		ToSQL()
+
+	if errSql != nil {
+		return nil, errSql
+	}
+
+	if store.debugEnabled {
+		log.Println(sqlStr)
+	}
+
+	result, err := sb.NewDatabase(store.db, store.dbDriverName).SelectToMapAny(sqlStr, sqlParams...)
+
+	return result, err
 }
