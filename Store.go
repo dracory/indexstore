@@ -54,6 +54,11 @@ func (st *Store) EnableDebug(debug bool) {
 	st.debugEnabled = debug
 }
 
+// Debug enables or disables SQL logging (alias of EnableDebug)
+func (st *Store) Debug(debug bool) {
+	st.debugEnabled = debug
+}
+
 func (store *Store) Insert(data map[string]any) error {
 	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
 		Insert(store.tableName).
