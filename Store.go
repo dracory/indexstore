@@ -27,19 +27,13 @@ type Store struct {
 //
 // It will drop the index table and create it again
 func (st *Store) AutoMigrate() error {
-	err := st.Drop()
-
-	if err != nil {
-		return err
-	}
-
 	sql := st.sqlTableCreate()
 
 	if st.debugEnabled {
 		log.Println(sql)
 	}
 
-	_, err = st.db.Exec(sql)
+	_, err := st.db.Exec(sql)
 
 	if err != nil {
 		log.Println(err)
