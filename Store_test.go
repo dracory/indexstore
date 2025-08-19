@@ -18,59 +18,191 @@ func initDB(filepath string) *sql.DB {
 	if err != nil {
 		panic(err)
 	}
-
 	return db
 }
 
+func Test_Store_DeleteWhereEquals(t *testing.T) {
+    db := initDB("test_store_delete_where_equals.db")
+
+    store, err := NewStore(NewStoreOptions{
+        TableName:          "test_index_delete",
+        DB:                 db,
+        AutomigrateEnabled: true,
+        Columns: []sb.Column{
+            {Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
+            {Name: "name", Type: sb.COLUMN_TYPE_TEXT},
+            {Name: "status", Type: sb.COLUMN_TYPE_TEXT},
+        },
+    })
+
+    if err != nil {
+        t.Fatalf("NewStore: %v", err)
+    }
+
+    if err := store.InsertMany([]map[string]any{{"id": 1, "name": "Alice", "status": "ok"}, {"id": 2, "name": "Bob", "status": "ok"}, {"id": 3, "name": "Charlie", "status": "ok"}}); err != nil {
+        t.Fatalf("InsertMany: %v", err)
+    }
+
+    if err := store.DeleteWhereEquals(map[string]any{"name": "Bob"}); err != nil {
+        t.Fatalf("DeleteWhereEquals: %v", err)
+    }
+
+    // Expect 2 rows left, and none with name Bob
+    count, err := store.Count(SearchQuery{})
+    if err != nil {
+        t.Fatalf("Count: %v", err)
+    }
+    if count != 2 {
+        t.Fatalf("Count after delete: expected 2 got %d", count)
+    }
+
+    res, err := store.Search(SearchQuery{Where: goqu.Ex{"name": "Bob"}})
+    if err != nil {
+        t.Fatalf("Search: %v", err)
+    }
+    if len(res) != 0 {
+        t.Fatalf("Expected no rows for Bob, got %d", len(res))
+    }
+}
+
+func Test_Store_UpsertWhereEquals_InsertThenUpdate(t *testing.T) {
+    db := initDB("test_store_upsert_where_equals.db")
+
+    store, err := NewStore(NewStoreOptions{
+        TableName:          "test_index_upsert_filters",
+        DB:                 db,
+        AutomigrateEnabled: true,
+        Columns: []sb.Column{
+            {Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
+            {Name: "name", Type: sb.COLUMN_TYPE_TEXT},
+            {Name: "status", Type: sb.COLUMN_TYPE_TEXT},
+        },
+    })
+
+    if err != nil {
+        t.Fatalf("NewStore: %v", err)
+    }
+
+    // Insert via UpsertWhereEquals when no row exists
+    if err := store.UpsertWhereEquals(map[string]any{"id": 1}, map[string]any{"id": 1, "name": "Alice", "status": "pending"}); err != nil {
+        t.Fatalf("UpsertWhereEquals insert: %v", err)
+    }
+
+    res, err := store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+    if err != nil || len(res) != 1 {
+        t.Fatalf("Search after insert: err=%v len=%d", err, len(res))
+    }
+    if cast.ToString(res[0]["name"]) != "Alice" {
+        t.Fatalf("Expected name Alice, got %v", res[0]["name"])
+    }
+
+    // Update via UpsertWhereEquals (non-filter columns only)
+    if err := store.UpsertWhereEquals(map[string]any{"id": 1}, map[string]any{"name": "Alice2", "status": "active"}); err != nil {
+        t.Fatalf("UpsertWhereEquals update: %v", err)
+    }
+
+    res, err = store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+    if err != nil || len(res) != 1 {
+        t.Fatalf("Search after update: err=%v len=%d", err, len(res))
+    }
+    if cast.ToString(res[0]["name"]) != "Alice2" {
+        t.Fatalf("Expected name Alice2, got %v", res[0]["name"])
+    }
+    if cast.ToString(res[0]["status"]) != "active" {
+        t.Fatalf("Expected status active, got %v", res[0]["status"])
+    }
+}
+
+func Test_Store_Upsert_Wrapper(t *testing.T) {
+    db := initDB("test_store_upsert_wrapper.db")
+
+    store, err := NewStore(NewStoreOptions{
+        TableName:          "test_index_upsert_wrapper",
+        DB:                 db,
+        AutomigrateEnabled: true,
+        Columns: []sb.Column{
+            {Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
+            {Name: "name", Type: sb.COLUMN_TYPE_TEXT},
+        },
+    })
+
+    if err != nil {
+        t.Fatalf("NewStore: %v", err)
+    }
+
+    // Insert via Upsert with conflictColumns ["id"]
+    if err := store.Upsert(map[string]any{"id": 1, "name": "Bob"}, []string{"id"}); err != nil {
+        t.Fatalf("Upsert insert: %v", err)
+    }
+
+    // Update existing row via Upsert
+    if err := store.Upsert(map[string]any{"id": 1, "name": "Bobby"}, []string{"id"}); err != nil {
+        t.Fatalf("Upsert update: %v", err)
+    }
+
+    res, err := store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+    if err != nil || len(res) != 1 {
+        t.Fatalf("Search after upsert: err=%v len=%d", err, len(res))
+    }
+    if cast.ToString(res[0]["name"]) != "Bobby" {
+        t.Fatalf("Expected name Bobby, got %v", res[0]["name"])
+    }
+
+    // Missing conflict column value should return error
+    if err := store.Upsert(map[string]any{"name": "NoID"}, []string{"id"}); err == nil {
+        t.Fatalf("Expected error when missing conflict column value")
+    }
+}
+
 func Test_Store_WithAutoMigrate(t *testing.T) {
-	db := initDB("test_store_with_automigrate.db")
+    db := initDB("test_store_with_automigrate.db")
 
-	storeAutomigrateFalse, errAutomigrateFalse := NewStore(NewStoreOptions{
-		TableName:          "test_index_with_automigrate_false",
-		DB:                 db,
-		AutomigrateEnabled: false,
-		Columns: []sb.Column{
-			{
-				Name:          "id",
-				Type:          sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey:    true,
-				AutoIncrement: true,
-			},
-		},
-	})
+    storeAutomigrateFalse, errAutomigrateFalse := NewStore(NewStoreOptions{
+        TableName:          "test_index_with_automigrate_false",
+        DB:                 db,
+        AutomigrateEnabled: false,
+        Columns: []sb.Column{
+            {
+                Name:          "id",
+                Type:          sb.COLUMN_TYPE_INTEGER,
+                PrimaryKey:    true,
+                AutoIncrement: true,
+            },
+        },
+    })
 
-	if errAutomigrateFalse != nil {
-		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", errAutomigrateFalse.Error())
-	}
+    if errAutomigrateFalse != nil {
+        t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", errAutomigrateFalse.Error())
+    }
 
-	if storeAutomigrateFalse.automigrateEnabled != false {
-		t.Fatalf("automigrateEnabled: Expected [false] received [%v]", storeAutomigrateFalse.automigrateEnabled)
-	}
+    if storeAutomigrateFalse.automigrateEnabled != false {
+        t.Fatalf("automigrateEnabled: Expected [false] received [%v]", storeAutomigrateFalse.automigrateEnabled)
+    }
 
-	storeAutomigrateTrue, errAutomigrateTrue := NewStore(NewStoreOptions{
-		TableName:          "test_index_with_automigrate_true",
-		DB:                 db,
-		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
-		},
-	})
+    storeAutomigrateTrue, errAutomigrateTrue := NewStore(NewStoreOptions{
+        TableName:          "test_index_with_automigrate_true",
+        DB:                 db,
+        AutomigrateEnabled: true,
+        Columns: []sb.Column{
+            {
+                Name:       "id",
+                Type:       sb.COLUMN_TYPE_INTEGER,
+                PrimaryKey: true,
+            },
+        },
+    })
 
-	if errAutomigrateTrue != nil {
-		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", errAutomigrateTrue.Error())
-	}
+    if errAutomigrateTrue != nil {
+        t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", errAutomigrateTrue.Error())
+    }
 
-	if storeAutomigrateTrue.automigrateEnabled != true {
-		t.Fatalf("automigrateEnabled: Expected [true] received [%v]", storeAutomigrateTrue.automigrateEnabled)
-	}
+    if storeAutomigrateTrue.automigrateEnabled != true {
+        t.Fatalf("automigrateEnabled: Expected [true] received [%v]", storeAutomigrateTrue.automigrateEnabled)
+    }
 }
 
 func Test_Store_Insert(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_insert.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
@@ -115,7 +247,7 @@ func Test_Store_Insert(t *testing.T) {
 }
 
 func Test_Store_InsertMany(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_insertmany.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
@@ -152,7 +284,7 @@ func Test_Store_InsertMany(t *testing.T) {
 }
 
 func Test_Store_Search_SelectAll(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_search_selectall.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
@@ -210,7 +342,7 @@ func Test_Store_Search_SelectAll(t *testing.T) {
 }
 
 func Test_Store_Search_Where(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_search_where.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
@@ -280,7 +412,7 @@ func Test_Store_Search_Where(t *testing.T) {
 }
 
 func Test_Store_Search_WhereExpression(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_search_whereexpr.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
@@ -361,7 +493,7 @@ func Test_Store_Search_WhereExpression(t *testing.T) {
 }
 
 func Test_Store_Count(t *testing.T) {
-	db := initDB("test_store_search.db")
+	db := initDB("test_store_count.db")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
