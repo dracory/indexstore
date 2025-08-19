@@ -2,6 +2,7 @@ package indexstore
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 
 	// "strconv"
@@ -89,6 +90,104 @@ func (store *Store) InsertMany(data []map[string]any) error {
 	_, err := store.db.Exec(sqlStr)
 
 	return err
+}
+
+// Upsert keeps backward compatibility with the original interface by
+// delegating to UpsertWhereEquals using the provided conflict columns
+func (store *Store) Upsert(data map[string]any, conflictColumns []string) error {
+    filters := map[string]any{}
+    for _, col := range conflictColumns {
+        val, ok := data[col]
+        if !ok {
+            return errors.New("upsert: missing conflict column value for " + col)
+        }
+        filters[col] = val
+    }
+    return store.UpsertWhereEquals(filters, data)
+}
+
+// DeleteWhereEquals deletes rows matching all equality filters.
+// Example: DeleteWhereEquals(map[string]any{"record_id": id, "status": "draft"})
+func (store *Store) DeleteWhereEquals(filters map[string]any) error {
+	where := goqu.Ex{}
+	for k, v := range filters {
+		where[k] = v
+	}
+
+	ds := goqu.Dialect(store.dbDriverName).
+		Delete(store.tableName)
+
+	if len(where) > 0 {
+		ds = ds.Where(where)
+	}
+
+	sqlStr, params, errSql := ds.ToSQL()
+	if errSql != nil {
+		return errSql
+	}
+
+	if store.debugEnabled {
+		log.Println(sqlStr)
+	}
+
+	_, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(sqlStr, params...)
+	return err
+}
+
+// UpsertWhereEquals performs an upsert using equality filters as the match criteria.
+// It updates non-filter columns when a match exists, otherwise inserts a new row
+// composed from filters and data (data keys override filters on conflict).
+func (store *Store) UpsertWhereEquals(filters map[string]any, data map[string]any) error {
+	// Build update map with keys from data excluding filter keys
+	updateMap := goqu.Record{}
+	for k, v := range data {
+		if _, isFilter := filters[k]; isFilter {
+			continue
+		}
+		updateMap[k] = v
+	}
+
+	// Attempt UPDATE if there is anything to update
+	if len(updateMap) > 0 {
+		sqlStr, params, errSql := goqu.Dialect(store.dbDriverName).
+			Update(store.tableName).
+			Set(updateMap).
+			Where(goqu.Ex(filters)).
+			ToSQL()
+
+		if errSql != nil {
+			return errSql
+		}
+
+		if store.debugEnabled {
+			log.Println(sqlStr)
+		}
+
+		res, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(sqlStr, params...)
+		if err != nil {
+			return err
+		}
+		if res != nil {
+			if affected, _ := res.RowsAffected(); affected > 0 {
+				return nil
+			}
+		}
+	} else {
+		// No fields to update; if a row exists, we are done.
+		if count, err := store.Count(SearchQuery{Where: goqu.Ex(filters)}); err == nil && count > 0 {
+			return nil
+		}
+	}
+
+	// Prepare insert row by merging filters and data (data overrides)
+	row := map[string]any{}
+	for k, v := range filters {
+		row[k] = v
+	}
+	for k, v := range data {
+		row[k] = v
+	}
+	return store.Insert(row)
 }
 
 func (store *Store) Truncate() error {
