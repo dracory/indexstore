@@ -3,7 +3,7 @@ package indexstore
 import (
 	"database/sql"
 
-	"github.com/gouniverse/sb"
+	"github.com/dracory/sb"
 )
 
 // NewStoreOptions define the options for creating a new session store

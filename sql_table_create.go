@@ -1,6 +1,6 @@
 package indexstore
 
-import "github.com/gouniverse/sb"
+import "github.com/dracory/sb"
 
 func (store *Store) sqlTableCreate() string {
 	columns := store.columns

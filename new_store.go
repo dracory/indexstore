@@ -3,7 +3,7 @@ package indexstore
 import (
 	"errors"
 
-	"github.com/gouniverse/sb"
+	"github.com/dracory/sb"
 )
 
 // NewStore creates a new entity store

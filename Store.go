@@ -1,6 +1,7 @@
 package indexstore
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log"
@@ -8,7 +9,7 @@ import (
 	// "strconv"
 
 	"github.com/doug-martin/goqu/v9"
-	"github.com/gouniverse/sb"
+	"github.com/dracory/sb"
 	"github.com/spf13/cast"
 )
 
@@ -95,15 +96,15 @@ func (store *Store) InsertMany(data []map[string]any) error {
 // Upsert keeps backward compatibility with the original interface by
 // delegating to UpsertWhereEquals using the provided conflict columns
 func (store *Store) Upsert(data map[string]any, conflictColumns []string) error {
-    filters := map[string]any{}
-    for _, col := range conflictColumns {
-        val, ok := data[col]
-        if !ok {
-            return errors.New("upsert: missing conflict column value for " + col)
-        }
-        filters[col] = val
-    }
-    return store.UpsertWhereEquals(filters, data)
+	filters := map[string]any{}
+	for _, col := range conflictColumns {
+		val, ok := data[col]
+		if !ok {
+			return errors.New("upsert: missing conflict column value for " + col)
+		}
+		filters[col] = val
+	}
+	return store.UpsertWhereEquals(filters, data)
 }
 
 // DeleteWhereEquals deletes rows matching all equality filters.
@@ -130,7 +131,7 @@ func (store *Store) DeleteWhereEquals(filters map[string]any) error {
 		log.Println(sqlStr)
 	}
 
-	_, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(sqlStr, params...)
+	_, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(context.Background(), sqlStr, params...)
 	return err
 }
 
@@ -163,7 +164,7 @@ func (store *Store) UpsertWhereEquals(filters map[string]any, data map[string]an
 			log.Println(sqlStr)
 		}
 
-		res, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(sqlStr, params...)
+		res, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(context.Background(), sqlStr, params...)
 		if err != nil {
 			return err
 		}
@@ -264,7 +265,7 @@ func (store *Store) Search(query SearchQuery) ([]map[string]any, error) {
 		log.Println(sqlStr)
 	}
 
-	result, err := sb.NewDatabase(store.db, store.dbDriverName).SelectToMapAny(sqlStr, sqlParams...)
+	result, err := sb.NewDatabase(store.db, store.dbDriverName).SelectToMapAny(context.Background(), sqlStr, sqlParams...)
 
 	return result, err
 }
@@ -286,7 +287,7 @@ func (store *Store) Count(query SearchQuery) (int64, error) {
 	}
 
 	db := sb.NewDatabase(store.db, store.dbDriverName)
-	mapped, err := db.SelectToMapString(sqlStr, params...)
+	mapped, err := db.SelectToMapString(context.Background(), sqlStr, params...)
 	if err != nil {
 		return -1, err
 	}
