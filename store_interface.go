@@ -1,9 +1,17 @@
 package indexstore
 
+import (
+	"context"
+	"database/sql"
+)
+
 // StoreInterface is the interface for the index store
 type StoreInterface interface {
-	// AutoMigrate ensures the index table exists and matches the configured schema
-	AutoMigrate() error
+	// MigrateDown drops the index table
+	MigrateDown(ctx context.Context, tx ...*sql.Tx) error
+
+	// MigrateUp creates the index table
+	MigrateUp(ctx context.Context, tx ...*sql.Tx) error
 
 	// Debug enables or disables SQL logging
 	Debug(debug bool)

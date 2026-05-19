@@ -1,6 +1,7 @@
 package indexstore
 
 import (
+	"context"
 	"errors"
 
 	"github.com/dracory/sb"
@@ -38,7 +39,7 @@ func NewStore(opts NewStoreOptions) (*Store, error) {
 	}
 
 	if store.automigrateEnabled {
-		err := store.AutoMigrate()
+		err := store.MigrateUp(context.Background())
 
 		if err != nil {
 			return nil, err

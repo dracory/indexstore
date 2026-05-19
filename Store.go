@@ -25,21 +25,58 @@ type Store struct {
 	columns            []sb.Column
 }
 
-// AutoMigrate auto migrate
-//
-// It will drop the index table and create it again
-func (st *Store) AutoMigrate() error {
+// MigrateUp creates the index table
+func (st *Store) MigrateUp(ctx context.Context, tx ...*sql.Tx) error {
+	var txToUse *sql.Tx
+	if len(tx) > 0 {
+		txToUse = tx[0]
+	}
+
 	sql := st.sqlTableCreate()
 
 	if st.debugEnabled {
 		log.Println(sql)
 	}
 
-	_, err := st.db.Exec(sql)
+	var errExec error
+	if txToUse != nil {
+		_, errExec = txToUse.ExecContext(ctx, sql)
+	} else {
+		_, errExec = st.db.ExecContext(ctx, sql)
+	}
+	if errExec != nil {
+		log.Println(errExec)
+		return errExec
+	}
 
+	return nil
+}
+
+// MigrateDown drops the index table
+func (st *Store) MigrateDown(ctx context.Context, tx ...*sql.Tx) error {
+	var txToUse *sql.Tx
+	if len(tx) > 0 {
+		txToUse = tx[0]
+	}
+
+	sql, err := st.sqlTableDrop()
 	if err != nil {
-		log.Println(err)
 		return err
+	}
+
+	if st.debugEnabled {
+		log.Println(sql)
+	}
+
+	var errExec error
+	if txToUse != nil {
+		_, errExec = txToUse.ExecContext(ctx, sql)
+	} else {
+		_, errExec = st.db.ExecContext(ctx, sql)
+	}
+	if errExec != nil {
+		log.Println(errExec)
+		return errExec
 	}
 
 	return nil
@@ -210,15 +247,18 @@ func (store *Store) Truncate() error {
 }
 
 func (store *Store) Drop() error {
-	sqlStr := sb.NewBuilder(store.dbDriverName).
+	sqlStr, err := sb.NewBuilder(store.dbDriverName).
 		Table(store.tableName).
 		DropIfExists()
+	if err != nil {
+		return err
+	}
 
 	if store.debugEnabled {
 		log.Println(sqlStr)
 	}
 
-	_, err := store.db.Exec(sqlStr)
+	_, err = store.db.Exec(sqlStr)
 
 	return err
 }
