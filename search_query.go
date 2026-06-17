@@ -1,9 +1,8 @@
 package indexstore
 
-import "github.com/doug-martin/goqu/v9"
-
+// SearchQuery defines the query parameters for searching the index store
 type SearchQuery struct {
-	Where     goqu.Expression
+	Where     map[string]any
 	Offset    int
 	Limit     int
 	SortOrder string

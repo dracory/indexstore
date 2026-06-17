@@ -2,19 +2,14 @@ package indexstore
 
 import (
 	"database/sql"
-	"os"
 	"testing"
 
-	"github.com/doug-martin/goqu/v9"
-	"github.com/dracory/sb"
 	"github.com/spf13/cast"
 	_ "modernc.org/sqlite"
 )
 
-func initDB(filepath string) *sql.DB {
-	os.Remove(filepath) // remove database
-	dsn := filepath + "?parseTime=true"
-	db, err := sql.Open("sqlite", dsn)
+func initDB(_ string) *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		panic(err)
 	}
@@ -22,16 +17,15 @@ func initDB(filepath string) *sql.DB {
 }
 
 func Test_Store_DeleteWhereEquals(t *testing.T) {
-	db := initDB("test_store_delete_where_equals.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_delete",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
-			{Name: "name", Type: sb.COLUMN_TYPE_TEXT},
-			{Name: "status", Type: sb.COLUMN_TYPE_TEXT},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -39,15 +33,15 @@ func Test_Store_DeleteWhereEquals(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 
-	if err := store.InsertMany([]map[string]any{{"id": 1, "name": "Alice", "status": "ok"}, {"id": 2, "name": "Bob", "status": "ok"}, {"id": 3, "name": "Charlie", "status": "ok"}}); err != nil {
+	if err := store.InsertMany([]map[string]any{{"id": "1", "data": "Alice"}, {"id": "2", "data": "Bob"}, {"id": "3", "data": "Charlie"}}); err != nil {
 		t.Fatalf("InsertMany: %v", err)
 	}
 
-	if err := store.DeleteWhereEquals(map[string]any{"name": "Bob"}); err != nil {
+	if err := store.DeleteWhereEquals(map[string]any{"data": "Bob"}); err != nil {
 		t.Fatalf("DeleteWhereEquals: %v", err)
 	}
 
-	// Expect 2 rows left, and none with name Bob
+	// Expect 2 rows left, and none with data Bob
 	count, err := store.Count(SearchQuery{})
 	if err != nil {
 		t.Fatalf("Count: %v", err)
@@ -56,7 +50,7 @@ func Test_Store_DeleteWhereEquals(t *testing.T) {
 		t.Fatalf("Count after delete: expected 2 got %d", count)
 	}
 
-	res, err := store.Search(SearchQuery{Where: goqu.Ex{"name": "Bob"}})
+	res, err := store.Search(SearchQuery{Where: map[string]any{"data": "Bob"}})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -66,16 +60,15 @@ func Test_Store_DeleteWhereEquals(t *testing.T) {
 }
 
 func Test_Store_UpsertWhereEquals_InsertThenUpdate(t *testing.T) {
-	db := initDB("test_store_upsert_where_equals.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_upsert_filters",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
-			{Name: "name", Type: sb.COLUMN_TYPE_TEXT},
-			{Name: "status", Type: sb.COLUMN_TYPE_TEXT},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -84,45 +77,42 @@ func Test_Store_UpsertWhereEquals_InsertThenUpdate(t *testing.T) {
 	}
 
 	// Insert via UpsertWhereEquals when no row exists
-	if err := store.UpsertWhereEquals(map[string]any{"id": 1}, map[string]any{"id": 1, "name": "Alice", "status": "pending"}); err != nil {
+	if err := store.UpsertWhereEquals(map[string]any{"id": "1"}, map[string]any{"id": "1", "data": "Alice"}); err != nil {
 		t.Fatalf("UpsertWhereEquals insert: %v", err)
 	}
 
-	res, err := store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+	res, err := store.Search(SearchQuery{Where: map[string]any{"id": "1"}})
 	if err != nil || len(res) != 1 {
 		t.Fatalf("Search after insert: err=%v len=%d", err, len(res))
 	}
-	if cast.ToString(res[0]["name"]) != "Alice" {
-		t.Fatalf("Expected name Alice, got %v", res[0]["name"])
+	if cast.ToString(res[0]["data"]) != "Alice" {
+		t.Fatalf("Expected data Alice, got %v", res[0]["data"])
 	}
 
 	// Update via UpsertWhereEquals (non-filter columns only)
-	if err := store.UpsertWhereEquals(map[string]any{"id": 1}, map[string]any{"name": "Alice2", "status": "active"}); err != nil {
+	if err := store.UpsertWhereEquals(map[string]any{"id": "1"}, map[string]any{"data": "Alice2"}); err != nil {
 		t.Fatalf("UpsertWhereEquals update: %v", err)
 	}
 
-	res, err = store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+	res, err = store.Search(SearchQuery{Where: map[string]any{"id": "1"}})
 	if err != nil || len(res) != 1 {
 		t.Fatalf("Search after update: err=%v len=%d", err, len(res))
 	}
-	if cast.ToString(res[0]["name"]) != "Alice2" {
-		t.Fatalf("Expected name Alice2, got %v", res[0]["name"])
-	}
-	if cast.ToString(res[0]["status"]) != "active" {
-		t.Fatalf("Expected status active, got %v", res[0]["status"])
+	if cast.ToString(res[0]["data"]) != "Alice2" {
+		t.Fatalf("Expected data Alice2, got %v", res[0]["data"])
 	}
 }
 
 func Test_Store_Upsert_Wrapper(t *testing.T) {
-	db := initDB("test_store_upsert_wrapper.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_upsert_wrapper",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{Name: "id", Type: sb.COLUMN_TYPE_INTEGER, PrimaryKey: true},
-			{Name: "name", Type: sb.COLUMN_TYPE_TEXT},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -131,25 +121,25 @@ func Test_Store_Upsert_Wrapper(t *testing.T) {
 	}
 
 	// Insert via Upsert with conflictColumns ["id"]
-	if err := store.Upsert(map[string]any{"id": 1, "name": "Bob"}, []string{"id"}); err != nil {
+	if err := store.Upsert(map[string]any{"id": "1", "data": "Bob"}, []string{"id"}); err != nil {
 		t.Fatalf("Upsert insert: %v", err)
 	}
 
 	// Update existing row via Upsert
-	if err := store.Upsert(map[string]any{"id": 1, "name": "Bobby"}, []string{"id"}); err != nil {
+	if err := store.Upsert(map[string]any{"id": "1", "data": "Bobby"}, []string{"id"}); err != nil {
 		t.Fatalf("Upsert update: %v", err)
 	}
 
-	res, err := store.Search(SearchQuery{Where: goqu.Ex{"id": 1}})
+	res, err := store.Search(SearchQuery{Where: map[string]any{"id": "1"}})
 	if err != nil || len(res) != 1 {
 		t.Fatalf("Search after upsert: err=%v len=%d", err, len(res))
 	}
-	if cast.ToString(res[0]["name"]) != "Bobby" {
-		t.Fatalf("Expected name Bobby, got %v", res[0]["name"])
+	if cast.ToString(res[0]["data"]) != "Bobby" {
+		t.Fatalf("Expected data Bobby, got %v", res[0]["data"])
 	}
 
 	// Missing conflict column value should return error
-	if err := store.Upsert(map[string]any{"name": "NoID"}, []string{"id"}); err == nil {
+	if err := store.Upsert(map[string]any{"data": "NoID"}, []string{"id"}); err == nil {
 		t.Fatalf("Expected error when missing conflict column value")
 	}
 }
@@ -161,14 +151,6 @@ func Test_Store_WithAutoMigrate(t *testing.T) {
 		TableName:          "test_index_with_automigrate_false",
 		DB:                 db,
 		AutomigrateEnabled: false,
-		Columns: []sb.Column{
-			{
-				Name:          "id",
-				Type:          sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey:    true,
-				AutoIncrement: true,
-			},
-		},
 	})
 
 	if errAutomigrateFalse != nil {
@@ -183,13 +165,6 @@ func Test_Store_WithAutoMigrate(t *testing.T) {
 		TableName:          "test_index_with_automigrate_true",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
-		},
 	})
 
 	if errAutomigrateTrue != nil {
@@ -202,18 +177,14 @@ func Test_Store_WithAutoMigrate(t *testing.T) {
 }
 
 func Test_Store_Insert(t *testing.T) {
-	db := initDB("test_store_insert.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
 		},
 	})
 
@@ -222,7 +193,7 @@ func Test_Store_Insert(t *testing.T) {
 	}
 
 	err = store.Insert(map[string]any{
-		"id": 1,
+		"id": "1",
 	})
 
 	if err != nil {
@@ -230,7 +201,7 @@ func Test_Store_Insert(t *testing.T) {
 	}
 
 	err = store.Insert(map[string]any{
-		"id": 2,
+		"id": "2",
 	})
 
 	if err != nil {
@@ -238,7 +209,7 @@ func Test_Store_Insert(t *testing.T) {
 	}
 
 	err = store.Insert(map[string]any{
-		"id": 3,
+		"id": "3",
 	})
 
 	if err != nil {
@@ -247,18 +218,14 @@ func Test_Store_Insert(t *testing.T) {
 }
 
 func Test_Store_InsertMany(t *testing.T) {
-	db := initDB("test_store_insertmany.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
 		},
 	})
 
@@ -268,13 +235,13 @@ func Test_Store_InsertMany(t *testing.T) {
 
 	err = store.InsertMany([]map[string]any{
 		{
-			"id": 1,
+			"id": "1",
 		},
 		{
-			"id": 2,
+			"id": "2",
 		},
 		{
-			"id": 3,
+			"id": "3",
 		},
 	})
 
@@ -284,18 +251,15 @@ func Test_Store_InsertMany(t *testing.T) {
 }
 
 func Test_Store_Search_SelectAll(t *testing.T) {
-	db := initDB("test_store_search_selectall.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -304,60 +268,36 @@ func Test_Store_Search_SelectAll(t *testing.T) {
 	}
 
 	err = store.InsertMany([]map[string]any{
-		{
-			"id": 1,
-		},
-		{
-			"id": 2,
-		},
-		{
-			"id": 3,
-		},
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
 	})
 
 	if err != nil {
-		t.Fatalf("Insert: Expected [err] to be nill received [%v]", err.Error())
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	searchQuery := SearchQuery{
-		Offset:    0,
-		Limit:     10,
-		SortOrder: "asc",
-		OrderBy:   "id",
-	}
-
-	result, err := store.Search(searchQuery)
+	res, err := store.Search(SearchQuery{})
 
 	if err != nil {
 		t.Fatalf("Search: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	if len(result) != 3 {
-		t.Fatalf("Search: Expected [3] received [%v]", len(result))
-	}
-
-	if cast.ToInt(result[0]["id"]) != 1 {
-		t.Fatalf("Search: Expected [1] received [%v]", result[0]["id"])
+	if len(res) != 3 {
+		t.Fatalf("Search: Expected [3] results received [%d]", len(res))
 	}
 }
 
-func Test_Store_Search_Where(t *testing.T) {
-	db := initDB("test_store_search_where.db")
+func Test_Store_Search_WithWhere(t *testing.T) {
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
-			{
-				Name: "name",
-				Type: sb.COLUMN_TYPE_TEXT,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -366,68 +306,42 @@ func Test_Store_Search_Where(t *testing.T) {
 	}
 
 	err = store.InsertMany([]map[string]any{
-		{
-			"id":   1,
-			"name": "Alice",
-		},
-		{
-			"id":   2,
-			"name": "Bob",
-		},
-		{
-			"id":   3,
-			"name": "Charlie",
-		},
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
 	})
 
 	if err != nil {
-		t.Fatalf("Insert: Expected [err] to be nill received [%v]", err.Error())
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	searchQuery := SearchQuery{
-		Where:     goqu.C("id").Eq(2),
-		Offset:    0,
-		Limit:     10,
-		SortOrder: "asc",
-		OrderBy:   "id",
-	}
-
-	result, err := store.Search(searchQuery)
+	res, err := store.Search(SearchQuery{
+		Where: map[string]any{"data": "Bob"},
+	})
 
 	if err != nil {
 		t.Fatalf("Search: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	if len(result) != 1 {
-		t.Fatalf("Search: Expected [3] received [%v]", len(result))
+	if len(res) != 1 {
+		t.Fatalf("Search: Expected [1] results received [%d]", len(res))
 	}
 
-	if cast.ToInt(result[0]["id"]) != 2 {
-		t.Fatalf("Search: Expected [2] received [%v]", result[0]["id"])
-	}
-
-	if cast.ToString(result[0]["name"]) != "Bob" {
-		t.Fatalf("Search: Expected [Bob] received [%v]", result[0]["name"])
+	if cast.ToString(res[0]["data"]) != "Bob" {
+		t.Fatalf("Search: Expected [Bob] received [%s]", cast.ToString(res[0]["data"]))
 	}
 }
 
-func Test_Store_Search_WhereExpression(t *testing.T) {
-	db := initDB("test_store_search_whereexpr.db")
+func Test_Store_Search_WithOrderBy(t *testing.T) {
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
-			{
-				Name: "name",
-				Type: sb.COLUMN_TYPE_TEXT,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -436,75 +350,123 @@ func Test_Store_Search_WhereExpression(t *testing.T) {
 	}
 
 	err = store.InsertMany([]map[string]any{
-		{
-			"id":   1,
-			"name": "Alice",
-		},
-		{
-			"id":   2,
-			"name": "Bob",
-		},
-		{
-			"id":   3,
-			"name": "Charlie",
-		},
+		{"id": "3", "data": "Charlie"},
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
 	})
 
 	if err != nil {
-		t.Fatalf("Insert: Expected [err] to be nill received [%v]", err.Error())
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	searchQuery := SearchQuery{
-		Where: goqu.Or(
-			goqu.Ex{
-				"id": goqu.Op{"eq": 2},
-				// "a": goqu.Op{"gt": 10},
-				// "b": goqu.Op{"lt": 10},
-			},
-			goqu.Ex{
-				"id": goqu.Op{"eq": 3},
-				// "c": nil,
-				// "d": []string{"a", "b", "c"},
-			},
-		),
-		Offset:    0,
-		Limit:     10,
-		SortOrder: "asc",
+	res, err := store.Search(SearchQuery{
 		OrderBy:   "id",
-	}
-
-	result, err := store.Search(searchQuery)
+		SortOrder: "asc",
+	})
 
 	if err != nil {
 		t.Fatalf("Search: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	if len(result) != 2 {
-		t.Fatalf("Search: Expected [3] received [%v]", len(result))
+	if len(res) != 3 {
+		t.Fatalf("Search: Expected [3] results received [%d]", len(res))
 	}
 
-	if cast.ToInt(result[0]["id"]) != 2 {
-		t.Fatalf("Search: Expected [2] received [%v]", result[0]["id"])
+	if cast.ToString(res[0]["id"]) != "1" {
+		t.Fatalf("Search: Expected [1] received [%s]", cast.ToString(res[0]["id"]))
+	}
+}
+
+func Test_Store_Search_WithLimit(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_search",
+		DB:                 db,
+		AutomigrateEnabled: true,
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	if cast.ToString(result[0]["name"]) != "Bob" {
-		t.Fatalf("Search: Expected [Bob] received [%v]", result[0]["name"])
+	err = store.InsertMany([]map[string]any{
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
+	})
+
+	if err != nil {
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	res, err := store.Search(SearchQuery{
+		Limit: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("Search: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	if len(res) != 2 {
+		t.Fatalf("Search: Expected [2] results received [%d]", len(res))
+	}
+}
+
+func Test_Store_Search_WithOffset(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_search",
+		DB:                 db,
+		AutomigrateEnabled: true,
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	err = store.InsertMany([]map[string]any{
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
+	})
+
+	if err != nil {
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	res, err := store.Search(SearchQuery{
+		Offset: 1,
+	})
+
+	if err != nil {
+		t.Fatalf("Search: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	if len(res) != 2 {
+		t.Fatalf("Search: Expected [2] results received [%d]", len(res))
 	}
 }
 
 func Test_Store_Count(t *testing.T) {
-	db := initDB("test_store_count.db")
+	db := initDB("")
 
 	store, err := NewStore(NewStoreOptions{
 		TableName:          "test_index_search",
 		DB:                 db,
 		AutomigrateEnabled: true,
-		Columns: []sb.Column{
-			{
-				Name:       "id",
-				Type:       sb.COLUMN_TYPE_INTEGER,
-				PrimaryKey: true,
-			},
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
 		},
 	})
 
@@ -513,43 +475,153 @@ func Test_Store_Count(t *testing.T) {
 	}
 
 	err = store.InsertMany([]map[string]any{
-		{
-			"id": 1,
-		},
-		{
-			"id": 2,
-		},
-		{
-			"id": 3,
-		},
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
 	})
 
 	if err != nil {
-		t.Fatalf("Insert: Expected [err] to be nill received [%v]", err.Error())
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	searchQuery := SearchQuery{
-		Where: goqu.Or(
-			goqu.Ex{
-				"id": goqu.Op{"eq": 2},
-			},
-			goqu.Ex{
-				"id": goqu.Op{"eq": 3},
-			},
-		),
-		// Offset:    0,
-		// Limit:     10,
-		SortOrder: "asc",
-		OrderBy:   "id",
-	}
-	count, err := store.Count(searchQuery)
+	count, err := store.Count(SearchQuery{})
 
 	if err != nil {
 		t.Fatalf("Count: Expected [err] to be nill received [%v]", err.Error())
 	}
 
-	if count != 2 {
-		t.Fatalf("Count: Expected [3] received [%v]", count)
+	if count != 3 {
+		t.Fatalf("Count: Expected [3] received [%d]", count)
+	}
+}
+
+func Test_Store_Truncate(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_search",
+		DB:                 db,
+		AutomigrateEnabled: true,
+		Columns: []ColumnDefinition{
+			{Name: "id", Type: "string", PrimaryKey: true},
+			{Name: "data", Type: "text"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", err.Error())
 	}
 
+	err = store.InsertMany([]map[string]any{
+		{"id": "1", "data": "Alice"},
+		{"id": "2", "data": "Bob"},
+		{"id": "3", "data": "Charlie"},
+	})
+
+	if err != nil {
+		t.Fatalf("InsertMany: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	err = store.Truncate()
+
+	if err != nil {
+		t.Fatalf("Truncate: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	count, err := store.Count(SearchQuery{})
+
+	if err != nil {
+		t.Fatalf("Count: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	if count != 0 {
+		t.Fatalf("Count: Expected [0] received [%d]", count)
+	}
+}
+
+func Test_Store_Drop(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_search",
+		DB:                 db,
+		AutomigrateEnabled: true,
+	})
+
+	if err != nil {
+		t.Fatalf("automigrateEnabled: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	err = store.Drop()
+
+	if err != nil {
+		t.Fatalf("Drop: Expected [err] to be nill received [%v]", err.Error())
+	}
+}
+
+func Test_Store_MigrateUp(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_migrateup",
+		DB:                 db,
+		AutomigrateEnabled: false,
+	})
+
+	if err != nil {
+		t.Fatalf("NewStore: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	err = store.MigrateUp(nil)
+
+	if err != nil {
+		t.Fatalf("MigrateUp: Expected [err] to be nill received [%v]", err.Error())
+	}
+}
+
+func Test_Store_MigrateDown(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_migratedown",
+		DB:                 db,
+		AutomigrateEnabled: true,
+	})
+
+	if err != nil {
+		t.Fatalf("NewStore: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	err = store.MigrateDown(nil)
+
+	if err != nil {
+		t.Fatalf("MigrateDown: Expected [err] to be nill received [%v]", err.Error())
+	}
+}
+
+func Test_Store_Debug(t *testing.T) {
+	db := initDB("")
+
+	store, err := NewStore(NewStoreOptions{
+		TableName:          "test_index_debug",
+		DB:                 db,
+		AutomigrateEnabled: true,
+		DebugEnabled:       false,
+	})
+
+	if err != nil {
+		t.Fatalf("NewStore: Expected [err] to be nill received [%v]", err.Error())
+	}
+
+	store.Debug(true)
+
+	if store.debugEnabled != true {
+		t.Fatalf("Debug: Expected [true] received [%v]", store.debugEnabled)
+	}
+
+	store.Debug(false)
+
+	if store.debugEnabled != false {
+		t.Fatalf("Debug: Expected [false] received [%v]", store.debugEnabled)
+	}
 }

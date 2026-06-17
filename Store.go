@@ -4,13 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
+	"os"
 
-	// "strconv"
-
-	"github.com/doug-martin/goqu/v9"
-	"github.com/dracory/sb"
-	"github.com/spf13/cast"
+	"github.com/dracory/neat"
+	contractsorm "github.com/dracory/neat/contracts/database/orm"
+	contractsschema "github.com/dracory/neat/contracts/database/schema"
 )
 
 var _ StoreInterface = (*Store)(nil) // verify it extends the interface
@@ -18,35 +17,57 @@ var _ StoreInterface = (*Store)(nil) // verify it extends the interface
 // Store is the index store
 type Store struct {
 	tableName          string
-	db                 *sql.DB
-	dbDriverName       string
+	db                 *neat.Database
 	automigrateEnabled bool
 	debugEnabled       bool
-	columns            []sb.Column
+	logger             *slog.Logger
+	columns            []ColumnDefinition
 }
 
 // MigrateUp creates the index table
 func (st *Store) MigrateUp(ctx context.Context, tx ...*sql.Tx) error {
-	var txToUse *sql.Tx
-	if len(tx) > 0 {
-		txToUse = tx[0]
+	if st.db.Schema().HasTable(st.tableName) {
+		if st.debugEnabled {
+			st.logger.Info("MigrateUp: table already exists", "table", st.tableName)
+		}
+		return nil
 	}
 
-	sql := st.sqlTableCreate()
+	err := st.db.Schema().Create(st.tableName, func(table contractsschema.Blueprint) {
+		if len(st.columns) == 0 {
+			// Default columns if none provided
+			table.String("id", 21)
+			table.Primary("id")
+			table.Text("data")
+			table.DateTime("created_at")
+			table.DateTime("updated_at")
+		} else {
+			// Use provided column definitions
+			for _, col := range st.columns {
+				switch col.Type {
+				case "string":
+					table.String(col.Name, 255)
+				case "text":
+					table.Text(col.Name)
+				case "integer":
+					table.Integer(col.Name)
+				case "datetime":
+					table.DateTime(col.Name)
+				default:
+					table.String(col.Name, 255)
+				}
+				if col.PrimaryKey {
+					table.Primary(col.Name)
+				}
+			}
+		}
+	})
 
-	if st.debugEnabled {
-		log.Println(sql)
-	}
-
-	var errExec error
-	if txToUse != nil {
-		_, errExec = txToUse.ExecContext(ctx, sql)
-	} else {
-		_, errExec = st.db.ExecContext(ctx, sql)
-	}
-	if errExec != nil {
-		log.Println(errExec)
-		return errExec
+	if err != nil {
+		if st.debugEnabled {
+			st.logger.Error("MigrateUp failed", "error", err)
+		}
+		return err
 	}
 
 	return nil
@@ -54,80 +75,51 @@ func (st *Store) MigrateUp(ctx context.Context, tx ...*sql.Tx) error {
 
 // MigrateDown drops the index table
 func (st *Store) MigrateDown(ctx context.Context, tx ...*sql.Tx) error {
-	var txToUse *sql.Tx
-	if len(tx) > 0 {
-		txToUse = tx[0]
+	if !st.db.Schema().HasTable(st.tableName) {
+		if st.debugEnabled {
+			st.logger.Info("MigrateDown: table does not exist", "table", st.tableName)
+		}
+		return nil
 	}
 
-	sql, err := st.sqlTableDrop()
+	err := st.db.Schema().Drop(st.tableName)
 	if err != nil {
+		if st.debugEnabled {
+			st.logger.Error("MigrateDown failed", "error", err)
+		}
 		return err
 	}
-
-	if st.debugEnabled {
-		log.Println(sql)
-	}
-
-	var errExec error
-	if txToUse != nil {
-		_, errExec = txToUse.ExecContext(ctx, sql)
-	} else {
-		_, errExec = st.db.ExecContext(ctx, sql)
-	}
-	if errExec != nil {
-		log.Println(errExec)
-		return errExec
-	}
-
 	return nil
 }
 
 // EnableDebug - enables the debug option
 func (st *Store) EnableDebug(debug bool) {
 	st.debugEnabled = debug
+	if debug {
+		st.db.EnableDebug()
+		st.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	} else {
+		st.db.DisableDebug()
+		st.logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	}
 }
 
 // Debug enables or disables SQL logging (alias of EnableDebug)
 func (st *Store) Debug(debug bool) {
-	st.debugEnabled = debug
+	st.EnableDebug(debug)
 }
 
 func (store *Store) Insert(data map[string]any) error {
-	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
-		Insert(store.tableName).
-		Rows(data).
-		ToSQL()
-
-	if errSql != nil {
-		return errSql
-	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err := store.db.Exec(sqlStr)
-
-	return err
+	return store.db.Query().Table(store.tableName).Create(data)
 }
 
 func (store *Store) InsertMany(data []map[string]any) error {
-	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
-		Insert(store.tableName).
-		Rows(data).
-		ToSQL()
-
-	if errSql != nil {
-		return errSql
+	for _, row := range data {
+		if err := store.db.Query().Table(store.tableName).Create(row); err != nil {
+			return err
+		}
 	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err := store.db.Exec(sqlStr)
-
-	return err
+	return nil
 }
 
 // Upsert keeps backward compatibility with the original interface by
@@ -147,28 +139,16 @@ func (store *Store) Upsert(data map[string]any, conflictColumns []string) error 
 // DeleteWhereEquals deletes rows matching all equality filters.
 // Example: DeleteWhereEquals(map[string]any{"record_id": id, "status": "draft"})
 func (store *Store) DeleteWhereEquals(filters map[string]any) error {
-	where := goqu.Ex{}
+	whereClause := ""
+	args := []any{}
 	for k, v := range filters {
-		where[k] = v
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += k + " = ?"
+		args = append(args, v)
 	}
-
-	ds := goqu.Dialect(store.dbDriverName).
-		Delete(store.tableName)
-
-	if len(where) > 0 {
-		ds = ds.Where(where)
-	}
-
-	sqlStr, params, errSql := ds.ToSQL()
-	if errSql != nil {
-		return errSql
-	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(context.Background(), sqlStr, params...)
+	_, err := store.db.Query().Table(store.tableName).Where(whereClause, args...).Delete()
 	return err
 }
 
@@ -177,7 +157,7 @@ func (store *Store) DeleteWhereEquals(filters map[string]any) error {
 // composed from filters and data (data keys override filters on conflict).
 func (store *Store) UpsertWhereEquals(filters map[string]any, data map[string]any) error {
 	// Build update map with keys from data excluding filter keys
-	updateMap := goqu.Record{}
+	updateMap := map[string]any{}
 	for k, v := range data {
 		if _, isFilter := filters[k]; isFilter {
 			continue
@@ -187,32 +167,30 @@ func (store *Store) UpsertWhereEquals(filters map[string]any, data map[string]an
 
 	// Attempt UPDATE if there is anything to update
 	if len(updateMap) > 0 {
-		sqlStr, params, errSql := goqu.Dialect(store.dbDriverName).
-			Update(store.tableName).
-			Set(updateMap).
-			Where(goqu.Ex(filters)).
-			ToSQL()
-
-		if errSql != nil {
-			return errSql
+		whereClause := ""
+		args := []any{}
+		for k, v := range filters {
+			if whereClause != "" {
+				whereClause += " AND "
+			}
+			whereClause += k + " = ?"
+			args = append(args, v)
 		}
-
-		if store.debugEnabled {
-			log.Println(sqlStr)
-		}
-
-		res, err := sb.NewDatabase(store.db, store.dbDriverName).Exec(context.Background(), sqlStr, params...)
+		_, err := store.db.Query().Table(store.tableName).Where(whereClause, args...).Update(updateMap)
 		if err != nil {
 			return err
 		}
-		if res != nil {
-			if affected, _ := res.RowsAffected(); affected > 0 {
-				return nil
-			}
+		// Check if row exists
+		count, err := store.Count(SearchQuery{Where: filters})
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
 		}
 	} else {
 		// No fields to update; if a row exists, we are done.
-		if count, err := store.Count(SearchQuery{Where: goqu.Ex(filters)}); err == nil && count > 0 {
+		if count, err := store.Count(SearchQuery{Where: filters}); err == nil && count > 0 {
 			return nil
 		}
 	}
@@ -229,64 +207,45 @@ func (store *Store) UpsertWhereEquals(filters map[string]any, data map[string]an
 }
 
 func (store *Store) Truncate() error {
-	sqlStr, _, errSql := goqu.Dialect(store.dbDriverName).
-		Truncate(store.tableName).
-		ToSQL()
-
-	if errSql != nil {
-		return errSql
-	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err := store.db.Exec(sqlStr)
-
+	_, err := store.db.Query().Table(store.tableName).Delete()
 	return err
 }
 
 func (store *Store) Drop() error {
-	sqlStr, err := sb.NewBuilder(store.dbDriverName).
-		Table(store.tableName).
-		DropIfExists()
-	if err != nil {
-		return err
-	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	_, err = store.db.Exec(sqlStr)
-
+	err := store.db.Schema().Drop(store.tableName)
 	return err
 }
 
-func (store *Store) query(query SearchQuery) *goqu.SelectDataset {
-	q := goqu.Dialect(store.dbDriverName).
-		Select("*").
-		Prepared(true).
-		From(store.tableName)
+func (store *Store) query(query SearchQuery) contractsorm.Query {
+	q := store.db.Query().Table(store.tableName)
 
 	if query.Where != nil {
-		q = q.Where(query.Where)
+		whereClause := ""
+		args := []any{}
+		for k, v := range query.Where {
+			if whereClause != "" {
+				whereClause += " AND "
+			}
+			whereClause += k + " = ?"
+			args = append(args, v)
+		}
+		q = q.Where(whereClause, args...)
 	}
 
 	if query.OrderBy != "" {
 		if query.SortOrder == "asc" {
-			q = q.Order(goqu.I(query.OrderBy).Asc())
+			q = q.OrderBy(query.OrderBy, "asc")
 		} else {
-			q = q.Order(goqu.I(query.OrderBy).Desc())
+			q = q.OrderBy(query.OrderBy, "desc")
 		}
 	}
 
 	if query.Offset > 0 {
-		q = q.Offset(cast.ToUint(query.Offset))
+		q = q.Offset(query.Offset)
 	}
 
 	if query.Limit > 0 {
-		q = q.Limit(cast.ToUint(query.Limit))
+		q = q.Limit(query.Limit)
 	}
 
 	return q
@@ -295,55 +254,23 @@ func (store *Store) query(query SearchQuery) *goqu.SelectDataset {
 func (store *Store) Search(query SearchQuery) ([]map[string]any, error) {
 	q := store.query(query)
 
-	sqlStr, sqlParams, errSql := q.ToSQL()
-
-	if errSql != nil {
-		return nil, errSql
+	var results []map[string]any
+	err := q.Get(&results)
+	if err != nil {
+		return nil, err
 	}
 
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	result, err := sb.NewDatabase(store.db, store.dbDriverName).SelectToMapAny(context.Background(), sqlStr, sqlParams...)
-
-	return result, err
+	return results, nil
 }
 
 func (store *Store) Count(query SearchQuery) (int64, error) {
 	q := store.query(query)
 
-	sqlStr, params, errSql := q.Prepared(true).
-		Limit(1).
-		Select(goqu.COUNT(goqu.Star()).As("count")).
-		ToSQL()
-
-	if errSql != nil {
-		return -1, nil
-	}
-
-	if store.debugEnabled {
-		log.Println(sqlStr)
-	}
-
-	db := sb.NewDatabase(store.db, store.dbDriverName)
-	mapped, err := db.SelectToMapString(context.Background(), sqlStr, params...)
+	var count int64
+	err := q.Count(&count)
 	if err != nil {
 		return -1, err
 	}
 
-	if len(mapped) < 1 {
-		return -1, nil
-	}
-
-	countStr := mapped[0]["count"]
-
-	i, err := cast.ToInt64E(countStr)
-
-	if err != nil {
-		return -1, err
-
-	}
-
-	return i, nil
+	return count, nil
 }

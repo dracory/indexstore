@@ -2,16 +2,20 @@ package indexstore
 
 import (
 	"database/sql"
-
-	"github.com/dracory/sb"
 )
 
-// NewStoreOptions define the options for creating a new session store
+// ColumnDefinition defines a column for the index table
+type ColumnDefinition struct {
+	Name       string
+	Type       string
+	PrimaryKey bool
+}
+
+// NewStoreOptions define the options for creating a new index store
 type NewStoreOptions struct {
 	TableName          string
 	DB                 *sql.DB
-	DbDriverName       string
 	AutomigrateEnabled bool
 	DebugEnabled       bool
-	Columns            []sb.Column
+	Columns            []ColumnDefinition
 }

@@ -3,44 +3,39 @@ package indexstore
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"os"
 
-	"github.com/dracory/sb"
+	"github.com/dracory/neat"
 )
 
-// NewStore creates a new entity store
+// NewStore creates a new index store
 func NewStore(opts NewStoreOptions) (*Store, error) {
-	store := &Store{
-		tableName:          opts.TableName,
-		automigrateEnabled: opts.AutomigrateEnabled,
-		db:                 opts.DB,
-		dbDriverName:       opts.DbDriverName,
-		debugEnabled:       opts.DebugEnabled,
-		columns:            opts.Columns,
-	}
-
-	if store.tableName == "" {
-		return nil, errors.New("index store: TableName is required")
-	}
-
-	if store.db == nil {
+	if opts.DB == nil {
 		return nil, errors.New("index store: DB is required")
 	}
 
-	if store.columns == nil {
-		return nil, errors.New("index store: Columns is required")
+	if opts.TableName == "" {
+		return nil, errors.New("index store: TableName is required")
 	}
 
-	if store.dbDriverName == "" {
-		store.dbDriverName = sb.DatabaseDriverName(store.db)
+	neatDB, err := neat.NewFromSQLDB(opts.DB)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(store.columns) < 1 {
-		return nil, errors.New("index store: Columns number must be greater than 0")
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	store := &Store{
+		tableName:          opts.TableName,
+		automigrateEnabled: opts.AutomigrateEnabled,
+		db:                 neatDB,
+		debugEnabled:       opts.DebugEnabled,
+		logger:             logger,
+		columns:            opts.Columns,
 	}
 
 	if store.automigrateEnabled {
 		err := store.MigrateUp(context.Background())
-
 		if err != nil {
 			return nil, err
 		}
