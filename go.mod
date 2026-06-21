@@ -3,7 +3,7 @@ module github.com/dracory/indexstore
 go 1.26.3
 
 require (
-	github.com/dracory/neat v0.23.0
+	github.com/dracory/neat v0.26.0
 	github.com/spf13/cast v1.10.0
 	modernc.org/sqlite v1.52.0
 )
