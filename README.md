@@ -1,4 +1,4 @@
-# Index Store <a href="https://gitpod.io/#https://github.com/gouniverse/indexstore" style="float:right:"><img src="https://gitpod.io/button/open-in-gitpod.svg" alt="Open in Gitpod" loading="lazy"></a>
+# Index Store
 
 ![tests](https://github.com/gouniverse/indexstore/workflows/tests/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gouniverse/indexstore)](https://goreportcard.com/report/github.com/gouniverse/indexstore)
